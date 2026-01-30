@@ -73,12 +73,7 @@ const Indicator = GObject.registerClass(
             this.client = jira_client_from_config(this.settings);
             this._work_journal = new WorkJournal(this.settings, () => this.client.tempo());
             if (this._work_journal.current_work()) {
-                // set up stop timer if recent work has been restored
-                const remaining = between(new Date(), this._work_journal.current_work().end());
-                if (remaining.toSeconds() > 0) {
-                    this.stop_work_timeout?.();
-                    this.stop_work_timeout = managedTimer(remaining, () => this.stop_work(), "stop work timeout (settings changed)");
-                }
+                this.stop_work_timeout?.();
             }
             this._refreshFilters();
             this.update_label();
@@ -197,7 +192,6 @@ const Indicator = GObject.registerClass(
             this._work_journal.start_work(issue.id, this.default_duration, () => this.update_label());
 
             this.stop_work_timeout?.();
-            this.stop_work_timeout = managedTimer(this.default_duration, () => this.stop_work(), "stop work timeout (start work)");
         }
 
         // Add an issue to recent issues and update the UI
@@ -226,9 +220,9 @@ const Indicator = GObject.registerClass(
             const current_work = this._work_journal?.current_work();
             if (current_work) {
                 const issue = this.issue_of(current_work);
-                const remaining_duration = between(new Date(), current_work.end());
-                this.label.set_text(`${issue.key} (${remaining_duration.toMinutes()}m remaining)`);
-                this._notification_state_machine.start_work(issue, `${remaining_duration.toMinutes()} minutes remaining`);
+                const elapsed_duration = between(current_work.start(), new Date());
+                this.label.set_text(`${issue.key} (${elapsed_duration.toMinutes()}m)`);
+                this._notification_state_machine.start_work(issue, `${elapsed_duration.toMinutes()} minutes`);
             } else {
                 this.label.set_text("⚠️ Not working on an issue ⚠️");
             }
