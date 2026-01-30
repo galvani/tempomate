@@ -38,7 +38,7 @@ class JiraServerClient {
 
     issue(issue, response_handler, error_handler) {
         console.log(`tempomate: Fetching issue ${issue}`);
-        this.rest_client.get(`/rest/api/2/issue/${encodeURI(issue)}?fields=id,key,summary`,
+        this.rest_client.get(`/rest/api/3/issue/${encodeURI(issue)}?fields=id,key,summary`,
             [["Authorization", `Bearer ${this.token}`]])
             .then(response_handler)
             .catch(e => {
@@ -49,7 +49,7 @@ class JiraServerClient {
 
     filter(jql, response_handler, error_handler) {
         this.rest_client.get(
-            `/rest/api/2/search?jql=${encodeURI(jql)}&maxResults=30&fields=id,key,summary`,
+            `/rest/api/3/search?jql=${encodeURI(jql)}&maxResults=30&fields=id,key,summary`,
             [["Authorization", `Bearer ${this.token}`]])
             .then(response_handler)
             .catch(error_handler);
@@ -80,9 +80,10 @@ class JiraCloudClient {
     }
 
     filter(jql, response_handler, error_handler) {
-        this.rest_client.get(
-            `/rest/api/3/search?jql=${encodeURI(jql)}&maxResults=30&fields=id,key,summary`,
-            [["Authorization", `Basic ${this._base64(this.username, this.token)}`]])
+        this.rest_client.post(
+            `/rest/api/3/search/jql`,
+            [["Authorization", `Basic ${this._base64(this.username, this.token)}`]],
+            { jql: jql, maxResults: 30, fields: ["id", "key", "summary"] })
             .then(response_handler)
             .catch(error_handler);
     }
