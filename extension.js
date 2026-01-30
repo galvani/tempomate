@@ -15,7 +15,7 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
-import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
+import { Extension, gettext as _ } from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import GObject from 'gi://GObject';
 import St from 'gi://St';
@@ -174,6 +174,11 @@ const Indicator = GObject.registerClass(
         }
 
         fetch_and_start_or_continue_work(issueKey, success_handler, error_handler) {
+            if (!this.client) {
+                console.error('tempomate: client is null - check deployment-type setting');
+                error_handler?.(new Error('Client not configured'));
+                return;
+            }
             this.client.issue(issueKey,
                 jira_issue => {
                     success_handler?.(jira_issue);
