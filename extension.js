@@ -69,11 +69,18 @@ const Indicator = GObject.registerClass(
 
         _settingsChanged() {
             this.default_duration = Duration.ofSeconds(this.settings.get_int("default-duration") * 60);
+            this.auto_stop_enabled = this.settings.get_boolean("auto-stop-enabled");
             this.queries = this.settings.get_strv('jqls').map((s) => JSON.parse(s));
             this.client = jira_client_from_config(this.settings);
-            this._work_journal = new WorkJournal(this.settings, () => this.client.tempo());
+            this._work_journal = new WorkJournal(this.settings, () => this.client.tempo(), error => this._on_worklog_error(error));
             if (this._work_journal.current_work()) {
                 this.stop_work_timeout?.();
+                if (this.auto_stop_enabled) {
+                    const remaining = between(new Date(), this._work_journal.current_work().end());
+                    if (remaining.toSeconds() > 0) {
+                        this.stop_work_timeout = managedTimer(remaining, () => this.stop_work(), "stop work timeout (settings changed)");
+                    }
+                }
             }
             this._refreshFilters();
             this.update_label();
@@ -81,7 +88,11 @@ const Indicator = GObject.registerClass(
 
             this._notification_state_machine.update_settings({
                 idle_notifications: this.settings.get_boolean("nag-notifications"),
-                idle_notification_interval: this.settings.get_int("nag-notification-interval")
+                idle_notification_interval: this.settings.get_int("nag-notification-interval"),
+                nag_notification_sound: this.settings.get_boolean("nag-notification-sound"),
+                work_hours_start: this.settings.get_int("work-hours-start"),
+                work_hours_end: this.settings.get_int("work-hours-end"),
+                work_days: this.settings.get_strv("work-days")
             })
         }
 
@@ -192,6 +203,9 @@ const Indicator = GObject.registerClass(
             this._work_journal.start_work(issue.id, this.default_duration, () => this.update_label());
 
             this.stop_work_timeout?.();
+            if (this.auto_stop_enabled) {
+                this.stop_work_timeout = managedTimer(this.default_duration, () => this.stop_work(), "stop work timeout (start work)");
+            }
         }
 
         // Add an issue to recent issues and update the UI
@@ -221,7 +235,7 @@ const Indicator = GObject.registerClass(
             if (current_work) {
                 const issue = this.issue_of(current_work);
                 const elapsed_duration = between(current_work.start(), new Date());
-                this.label.set_text(`${issue.key} (${elapsed_duration.toMinutes()}m)`);
+                this.label.set_text(`🔨 ${issue.key} (${elapsed_duration.toMinutes()}m)`);
                 this._notification_state_machine.start_work(issue, `${elapsed_duration.toMinutes()} minutes`);
             } else {
                 this.label.set_text("⚠️ Not working on an issue ⚠️");
@@ -244,6 +258,18 @@ const Indicator = GObject.registerClass(
                 id: worklog.issueId(),
                 key: "unkown"
             })
+        }
+
+        _on_worklog_error(error) {
+            if (error.status_code === 401) {
+                this._notification_state_machine.show_error(
+                    "Tempomate: Authentication failed",
+                    "Your Tempo API token is invalid or expired. Please update it in the extension settings.");
+            } else {
+                this._notification_state_machine.show_error(
+                    "Tempomate: Failed to save worklog",
+                    `${error.message}`);
+            }
         }
 
         _refreshFilters() {

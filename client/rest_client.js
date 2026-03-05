@@ -46,7 +46,9 @@ class RestClient {
                         const bytes = this.httpSession.send_and_read_finish(response_message);
                         console.error(`tempomate: ${method} ${this.base_url}${path} failed with status ${message.status_code}`);
                         debug(`Response ${new TextDecoder().decode(bytes.get_data())}`)
-                        reject(new Error(`Received response status code ${message.status_code}`))
+                        const error = new Error(`Received response status code ${message.status_code}`);
+                        error.status_code = message.status_code;
+                        reject(error)
                     }
                 } catch (e) {
                     console.error(`tempomate: ${method} ${this.base_url}${path} error:`, e.message);
