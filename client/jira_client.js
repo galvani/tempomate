@@ -3,6 +3,12 @@ import { RestClient } from './rest_client.js';
 import { TempoServerClient } from './tempo_server_client.js';
 import { TempoCloudClient } from './tempo_cloud_client.js';
 
+function normalizePickerResponse(response) {
+    return (response.sections ?? [])
+        .flatMap(section => section.issues ?? [])
+        .map(issue => ({ id: issue.id, key: issue.key, fields: { summary: issue.summaryText } }));
+}
+
 function jira_client_from_config(settings) {
     const deploymentType = settings.get_string("deployment-type");
     console.log(`tempomate: deployment-type = ${deploymentType}`);
@@ -55,6 +61,14 @@ class JiraServerClient {
             .catch(error_handler);
     }
 
+    search(query, response_handler, error_handler) {
+        this.rest_client.get(
+            `/rest/api/3/issue/picker?query=${encodeURI(query)}&showSubTasks=true`,
+            [["Authorization", `Bearer ${this.token}`]])
+            .then(response => response_handler(normalizePickerResponse(response)))
+            .catch(error_handler);
+    }
+
     async tempo() {
         return Promise.resolve(new TempoServerClient(this.rest_client, this.username, this.token));
     }
@@ -85,6 +99,14 @@ class JiraCloudClient {
             [["Authorization", `Basic ${this._base64(this.username, this.token)}`]],
             { jql: jql, maxResults: 30, fields: ["id", "key", "summary"] })
             .then(response_handler)
+            .catch(error_handler);
+    }
+
+    search(query, response_handler, error_handler) {
+        this.rest_client.get(
+            `/rest/api/3/issue/picker?query=${encodeURI(query)}&showSubTasks=true`,
+            [["Authorization", `Basic ${this._base64(this.username, this.token)}`]])
+            .then(response => response_handler(normalizePickerResponse(response)))
             .catch(error_handler);
     }
 

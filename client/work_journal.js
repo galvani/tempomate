@@ -18,14 +18,17 @@ class WorkJournal {
             this._previous_work = undefined;
             this._current_work = undefined;
         } else {
-            // new format
+            const parsed = recent_work ? JSON.parse(recent_work) : null;
             const worklog = fromJsonString(recent_work)
-            if (worklog?.end().getTime() < new Date().getTime()) {
-                this._previous_work = worklog;
-                this._current_work = undefined;
-            } else {
+            const active = parsed?.hasOwnProperty('active')
+                ? parsed.active
+                : worklog?.end().getTime() >= new Date().getTime();
+            if (worklog && active) {
                 this._previous_work = undefined;
                 this._current_work = worklog;
+            } else {
+                this._previous_work = worklog;
+                this._current_work = undefined;
             }
         }
     }
@@ -51,7 +54,8 @@ class WorkJournal {
         if (this._current_work) {
             // continue work
             this._current_work = this._current_work.withDuration(between(this._current_work.start(), now).add(duration));
-            this.tempo_client().then(client => client.save_worklog(this._current_work, result => {
+            const worklog = this._current_work;
+            this.tempo_client().then(client => client.save_worklog(worklog, result => {
                 callback?.(result);
                 this._store_current_work();
             }))
@@ -63,28 +67,31 @@ class WorkJournal {
                     //just adjust the previous log duration
                     this._current_work = this._previous_work.withDuration(between(this._previous_work.start(), now).add(duration));
                     this._previous_work = undefined;
-                    this.tempo_client().then(client => client.save_worklog(this.current_work(), result => {
+                    const worklog = this._current_work;
+                    this.tempo_client().then(client => client.save_worklog(worklog, result => {
                         callback?.(result);
                         this._store_current_work();
                     }))
                         .catch(error => this._handle_error(error));
                 } else {
                     // start a new worklog with a start in the past
-                    this.tempo_client().then(client => client.save_worklog(
-                        new WorkLog(this._previous_work.end(),
-                            between(this._previous_work.end(), now).add(duration),
-                            issueId),
-                        result => {
-                            this._previous_work = undefined;
-                            this._current_work = result;
-                            callback?.(result);
-                            this._store_current_work();
-                        }))
+                    this._current_work = new WorkLog(this._previous_work.end(),
+                        between(this._previous_work.end(), now).add(duration),
+                        issueId);
+                    this._previous_work = undefined;
+                    this._store_current_work();
+                    const worklog = this._current_work;
+                    this.tempo_client().then(client => client.save_worklog(worklog, result => {
+                        this._current_work = result;
+                        callback?.(result);
+                        this._store_current_work();
+                    }))
                         .catch(error => this._handle_error(error));
                 }
             } else {
                 this._current_work = new WorkLog(now, duration, issueId);
-                this.tempo_client().then(client => client.save_worklog(this._current_work, result => {
+                const worklog = this._current_work;
+                this.tempo_client().then(client => client.save_worklog(worklog, result => {
                     // update with synced worklog
                     this._current_work = result;
                     callback?.(result);
@@ -95,10 +102,22 @@ class WorkJournal {
         }
     }
 
+    sync_work() {
+        if (this._current_work) {
+            this._current_work = this._current_work.withDuration(between(this._current_work.start(), new Date()));
+            const worklog = this._current_work;
+            this.tempo_client().then(client => client.save_worklog(worklog, result => {
+                this._store_current_work();
+            }))
+                .catch(error => this._handle_error(error));
+        }
+    }
+
     stop_work(callback) {
         if (this._current_work) {
             this._previous_work = this._current_work.withDuration(between(this._current_work.start(), new Date()));
-            this.tempo_client().then(client => client.save_worklog(this._previous_work))
+            const worklog = this._previous_work;
+            this.tempo_client().then(client => client.save_worklog(worklog))
                 .catch(error => this._handle_error(error));
             this._current_work = undefined;
             callback?.();
@@ -117,8 +136,11 @@ class WorkJournal {
 
     _store_current_work() {
         if (this._current_work || this._previous_work) {
-            debug(`Storing current WorkLog: ${(this._current_work || this._previous_work)?.toJsonString()}`)
-            this._settings.set_string("most-recent-work-log", (this._current_work || this._previous_work)?.toJsonString())
+            const worklog = this._current_work || this._previous_work;
+            const data = JSON.parse(worklog.toJsonString());
+            data.active = !!this._current_work;
+            debug(`Storing current WorkLog: ${JSON.stringify(data)}`)
+            this._settings.set_string("most-recent-work-log", JSON.stringify(data))
         }
     }
 

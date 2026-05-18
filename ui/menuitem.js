@@ -63,9 +63,9 @@ export var EditableMenuItem = GObject.registerClass(
 
             const vertical_layout = new St.BoxLayout({ vertical: true, x_expand: true });
             const inner_layout = new St.BoxLayout({ vertical: false, x_expand: true });
-            const entry = new St.Entry({ hint_text: "Issue ID", x_expand: true });
-            inner_layout.add_child(entry)
-            actions.map(action => new ActionButton(action, () => entry.text))
+            this.entry = new St.Entry({ hint_text: "Search or enter Issue ID", x_expand: true });
+            inner_layout.add_child(this.entry)
+            actions.map(action => new ActionButton(action, () => this.entry.text))
                 .forEach(actionButton => inner_layout.add_child(actionButton));
             this.error = new St.Bin();
             vertical_layout.add_child(inner_layout);

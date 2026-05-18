@@ -48,8 +48,14 @@ const Indicator = GObject.registerClass(
             this.setMenu(new PopupMenu.PopupMenu(this, 0.0, St.Side.TOP, 0));
             this.settings = settings;
             this._notification_state_machine = new NotificationStateMachine();
+            this._searchCache = new Map();
             this._restore()
-            this._settingsChangedId = this.settings.connect('changed', this._settingsChanged.bind(this));
+            this._settingsChangedId = this.settings.connect('changed', (settings, key) => {
+                if (key === 'most-recent-work-log' || key === 'issue-cache' || key === 'recent-issues') {
+                    return;
+                }
+                this._settingsChanged();
+            });
             this._settingsChanged();
 
             this.menu.connect("open-state-changed", this.updateUI.bind(this))
@@ -72,6 +78,7 @@ const Indicator = GObject.registerClass(
             this.auto_stop_enabled = this.settings.get_boolean("auto-stop-enabled");
             this.queries = this.settings.get_strv('jqls').map((s) => JSON.parse(s));
             this.client = jira_client_from_config(this.settings);
+            this._searchCache.clear();
             this._work_journal = new WorkJournal(this.settings, () => this.client.tempo(), error => this._on_worklog_error(error));
             if (this._work_journal.current_work()) {
                 this.stop_work_timeout?.();
@@ -81,6 +88,12 @@ const Indicator = GObject.registerClass(
                         this.stop_work_timeout = managedTimer(remaining, () => this.stop_work(), "stop work timeout (settings changed)");
                     }
                 }
+                if (!this.sync_work_interval) {
+                    this.sync_work_interval = interval(Duration.ofSeconds(300), Duration.ofSeconds(300), () => this._work_journal.sync_work(), "sync worklog");
+                }
+            } else {
+                this.sync_work_interval?.();
+                this.sync_work_interval = null;
             }
             this._refreshFilters();
             this.update_label();
@@ -97,6 +110,7 @@ const Indicator = GObject.registerClass(
         }
 
         updateUI(menu, opened) {
+            this._cancelSearchTimer?.();
             if (!opened || !this._work_journal) {
                 return;
             }
@@ -171,6 +185,53 @@ const Indicator = GObject.registerClass(
                 }
             })
             this.menu.addMenuItem(editableMenuItem);
+
+            const searchResultsSection = new PopupMenu.PopupMenuSection();
+            this.menu.addMenuItem(searchResultsSection);
+
+            editableMenuItem.entry.get_clutter_text().connect('text-changed', () => {
+                this._cancelSearchTimer?.();
+                const query = editableMenuItem.entry.text.trim();
+                if (query.length < 2) {
+                    searchResultsSection.removeAll();
+                    return;
+                }
+                const cached = this._searchCache.get(query.toLowerCase());
+                if (cached && (Date.now() - cached.timestamp) < 300000) {
+                    this._populateSearchResults(searchResultsSection, cached.issues);
+                    return;
+                }
+                this._cancelSearchTimer = managedTimer(Duration.ofMillis(300), () => {
+                    this.client.search(query,
+                        issues => {
+                            this._searchCache.set(query.toLowerCase(), { issues, timestamp: Date.now() });
+                            this._evictSearchCache();
+                            this._populateSearchResults(searchResultsSection, issues);
+                        },
+                        error => {
+                            debug("Search failed:", error?.message);
+                            editableMenuItem.set_error?.("Search failed");
+                        });
+                }, "search debounce");
+            });
+        }
+
+        _populateSearchResults(section, issues) {
+            section.removeAll();
+            for (const issue of issues) {
+                section.addMenuItem(this.generateMenuItem(issue));
+            }
+        }
+
+        _evictSearchCache() {
+            if (this._searchCache.size <= 50) {
+                return;
+            }
+            const oldest = [...this._searchCache.entries()]
+                .sort((a, b) => a[1].timestamp - b[1].timestamp)[0];
+            if (oldest) {
+                this._searchCache.delete(oldest[0]);
+            }
         }
 
         generateMenuItem(issue, ...actions) {
@@ -200,11 +261,16 @@ const Indicator = GObject.registerClass(
             }
             debug("starting work " + issue.key)
             this.add_recent_issue(issue);
-            this._work_journal.start_work(issue.id, this.default_duration, () => this.update_label());
+            this._work_journal.start_work(issue.id, Duration.ofSeconds(60), () => this.update_label());
+            this.update_label();
 
             this.stop_work_timeout?.();
             if (this.auto_stop_enabled) {
                 this.stop_work_timeout = managedTimer(this.default_duration, () => this.stop_work(), "stop work timeout (start work)");
+            }
+
+            if (!this.sync_work_interval) {
+                this.sync_work_interval = interval(Duration.ofSeconds(300), Duration.ofSeconds(300), () => this._work_journal.sync_work(), "sync worklog");
             }
         }
 
@@ -226,6 +292,8 @@ const Indicator = GObject.registerClass(
             this._notification_state_machine.stop_work();
 
             this.stop_work_timeout?.();
+            this.sync_work_interval?.();
+            this.sync_work_interval = null;
             this._work_journal.stop_work();
             this.update_label();
         }
@@ -280,7 +348,9 @@ const Indicator = GObject.registerClass(
 
         destroy() {
             this._save_state();
+            this._cancelSearchTimer?.();
             this.stop_work_timeout?.();
+            this.sync_work_interval?.();
             this.update_label_interval?.();
             this.issue_refresh_interval?.();
 
